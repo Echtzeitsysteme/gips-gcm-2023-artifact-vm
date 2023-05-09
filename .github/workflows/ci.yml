@@ -1,0 +1,155 @@
+name: Build GIPS GCM Artifact
+
+on:
+  push:
+    branches:
+      - main
+      - 'testing/**'
+      - 'feature/**'
+      - 'hotfix/**'
+    # Run pipeline for release tags
+    tags:
+      - 'v*.*.*'
+
+env:
+  # Template URL
+  TEMPLATE_SRC: "https://api.github.com/repos/Wandmalfarbe/pandoc-latex-template/releases/latest"
+  GIPS_BASE_VM_RELEASE: "v1.0.0.202303231618-r3"
+
+permissions:
+  contents: write
+
+jobs:
+  collect-github-api-artifacts:
+    runs-on: [ubuntu-22.04]
+    steps:
+      - name: Find template source
+        run: |
+          RESPONSE=$(curl -s $TEMPLATE_SRC)
+          echo "curl: $RESPONSE"
+          LATEST_SRC=$(echo "$RESPONSE" \
+            | grep "/Eisvogel.zip" \
+            | cut -d : -f 2,3 \
+            | tr -d \")
+          if [[ -z "${LATEST_SRC// }" ]]; then
+            echo "This runner propably reached it's GitHub API rate limit. Exit."
+            exit 1
+          fi
+          echo "Found URL: $LATEST_SRC"
+          wget "${LATEST_SRC// }"
+      - name: Upload template artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: Eisvogel.zip
+          path: Eisvogel.zip
+
+  build-pdf:
+    needs: [collect-github-api-artifacts]
+    runs-on: [ubuntu-22.04]
+    steps:
+      - name: Start message
+        run: echo "Started CI build (GIPS GCM template PDF)."
+      - name: Check out repository code
+        uses: actions/checkout@v3
+      - name: Download template
+        uses: actions/download-artifact@v3
+        with:
+          name: Eisvogel.zip
+      - name: Move template
+        run: mv Eisvogel.zip ./tutorial
+      - name: Build Docker image
+        run: |
+          cd tutorial
+          docker build -t pandoc-builder .
+      - name: Build PDF
+        run: |
+          cd tutorial
+          docker run --rm -v $PWD:/data pandoc-builder pandoc tutorial.md -o tutorial.pdf --from markdown --template eisvogel --listings --table-of-contents
+      - name: Upload artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: tutorial.pdf
+          path: tutorial/tutorial.pdf
+
+  release-pdf:
+    needs: [build-pdf]
+    runs-on: ubuntu-22.04
+    # Only run on pushed tags (and explicitely ignore scheduled runs)
+    if: github.event_name == 'push' && contains(github.ref, 'refs/tags/') && github.event_name != 'schedule'
+    steps:
+      - name: Collect artifacts
+        uses: actions/download-artifact@master
+        with:
+          name: tutorial.pdf
+      - name: Release GIPS GCM tutorial PDF
+        uses: softprops/action-gh-release@v1
+        with:
+          files: tutorial.pdf
+          body: Please download the file 'tutorial.pdf' below to get started.
+          append_body: true
+
+  vagrant-provision:
+    needs: [build-pdf]
+    # Running on macOS, because macOS-based GitHub-hosted action runners do support nested virtualization.
+    # https://github.com/actions/runner-images/issues/433
+    runs-on: macos-12
+    steps:
+    - uses: actions/checkout@v3
+    - name: Collect artifacts
+      uses: actions/download-artifact@master
+      with:
+        name: tutorial.pdf
+    - name: show Vagrant version
+      run: vagrant --version
+    - name: get base VM archive
+      run: |
+        wget -q https://github.com/Echtzeitsysteme/gips-vm/releases/download/$GIPS_BASE_VM_RELEASE/gips-vm.zip
+        wget -q https://github.com/Echtzeitsysteme/gips-vm/releases/download/$GIPS_BASE_VM_RELEASE/gips-vm.z01
+        wget -q https://github.com/Echtzeitsysteme/gips-vm/releases/download/$GIPS_BASE_VM_RELEASE/gips-vm.z02
+    - name: prepare environment
+      run: chmod +x prepare.sh && bash -c ./prepare.sh
+    - name: run vagrant up
+      run: |
+        vagrant up
+        echo "=> Vagrant provisioning finished."
+    - name: export VirtualBox VM
+      run: |
+        vagrant halt
+        vboxmanage export gips-gcm -o gips-gcm.ova
+    - name: upload artifact
+      uses: actions/upload-artifact@v3
+      with:
+        name: gips-gcm-ova
+        path: gips-gcm.ova
+
+  # Create a release if running on tag
+  release-vm:
+    needs: [vagrant-provision]
+    runs-on: ubuntu-20.04
+    # Only run on pushed tags (and explicitely ignore scheduled runs)
+    if: github.event_name == 'push' && contains(github.ref, 'refs/tags/') && github.event_name != 'schedule'
+    steps:
+      - name: collect artifacts
+        uses: actions/download-artifact@master
+      - name: create splitted ZIP archive
+        run: |
+          sudo apt-get install -yq zip
+          zip -r -s 1990m gips-gcm-vm.zip gips-gcm-ova/gips-gcm.ova
+      # Due to a bug in the release action, we have to upload all artifacts step-by-step
+      # https://github.com/softprops/action-gh-release/issues/243
+      - name: release gips-gcm-vm (1)
+        uses: softprops/action-gh-release@v1
+        with:
+          body: "The VM archive can not be directly added to this release because of the size limitation of 2GB per file. Please download the splitted ZIP archive and extract it manually."
+          append_body: true
+          files: gips-gcm-vm.zip
+      - name: release gips-gcm-vm (2)
+        uses: softprops/action-gh-release@v1
+        with:
+          files: gips-gcm-vm.z01
+          append_body: true
+      - name: release gips-gcm-vm (3)
+        uses: softprops/action-gh-release@v1
+        with:
+          files: gips-gcm-vm.z02
+          append_body: true
