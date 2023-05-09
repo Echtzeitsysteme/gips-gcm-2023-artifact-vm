@@ -95,6 +95,9 @@ jobs:
     runs-on: macos-12
     steps:
     - uses: actions/checkout@v3
+    - name: install dependencies
+      run: |
+        brew install wget unzip gnu-tar gnu-sed
     - name: Collect artifacts
       uses: actions/download-artifact@master
       with:
@@ -115,7 +118,12 @@ jobs:
     - name: export VirtualBox VM
       run: |
         vagrant halt
-        vboxmanage export gips-gcm -o gips-gcm.ova
+        vboxmanage export gips-gcm -o gips-gcm.ovf
+        sed -i -e '/<BIOS>/,/<\/BIOS>/d' gips-gcm.ovf
+        sed -i -e '/<RemoteDisplay enabled="true">/,/<\/RemoteDisplay>/d' gips-gcm.ovf
+        gtar -cvf gips-gcm.ova gips-gcm.ovf gips-gcm-disk001.vmdk
+        rm -rf gips-gcm.ovf gips-gcm-disk001.vmdk
+      # ^gtar (to use gnu-tar) instead of macOS tar
     - name: upload artifact
       uses: actions/upload-artifact@v3
       with:
