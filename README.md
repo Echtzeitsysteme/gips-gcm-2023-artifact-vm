@@ -1,6 +1,8 @@
 # GIPS GCM 2023 Artifact VM
 
-[**GIPS**](https://gips.dev) is an open-source framework for **G**raph-Based **I**LP **P**roblem **S**pecification.
+## This repository was archived but the VM can still be downloaded via the release section!
+
+[**GIPS**](https://gips.dev) is an open-source framework for **G**raph-Based (M)**I**LP **P**roblem **S**pecification.
 
 This repository holds the example of our **GCM 2023 Artifact** submission together with the **GIPS** framework as a runnable virtual machine (VM) artifact.
 
